@@ -1,0 +1,292 @@
+% =========================================================================
+%> @file      Sparse_MIT_DPL.m
+%> @brief     QuickSync implementation with doppler correction and 250 Hz
+%of accuracy. The doppler correction is performed in the time domain
+%by a complex exponential multiplication. Structure for detection is
+%doppler->sat->buckets.
+%> @details   This code works with modelated data and implement the mit
+%>algorith given any sampling frequency. Few modifications were added in
+%>order to make the code portable and functional among all sampling
+%>frequencies. The most significant result is that the critical values for p
+%>and n/p as described by the paper are rounded in execution. Search step: 250 Hz.
+%>
+%> @date      Apr 27, 2014
+%> @bug       Code Phase delay may be different by a few samples
+%> @bug       False positive on satellites with small value of SNR
+%> @note      Data doppler correction performed inside the loop process.
+%> @author    Damian Miralles. dmiralles2009@gmail.com
+%> @author	  Marvi Teixeira.  mteixeira@ieee.org
+%> @author	  Jennifer Sandoval
+%> @author    Manuel Ortiz
+%> @copyright Copyright ©2014.  Damian Miralles, Marvi Teixeira, Jennifer Sandoval, Manuel Ortiz. All Rights Reserved.\n 
+%>The authors grant permission to use, reproduce, modify, and distribute this software and its documentation for education, academic research and within non-commercial, non-profit endeavors as long as this copyright notice is included in each of the mentioned instances. No fee or signed licensing agreement is required provided that the copyright notice developed in this and in the following  paragraph is included in all reproductions, alterations, and distributions of the software or its  documentation. Contact the authors regarding any commercial licensing needs.\n 
+%>THIS EXPERIMENTAL SOFTWARE AND RELATED DOCUMENTATION ARE PROVIDED “AS IS” AND NO, EXPLICIT OR IMPLICT, CLAIMS REGARDING THEIR ACCURACY OR SUITABILITY ARE MADE. USERS ARE RESPONSIBLE FOR SOFTWARE VALIDATION REGARDING THEIR PARTICULAR APPLICATION. NO UPDATES WILL BE OFFERED. VERY LIMITED SUPPORT COULD BE PROVIDED, BUT NOT GUARANTEED, ON A CASE BY CASE BASIS, DEPENDING ON THE AVAILABLE TIME RESOURCES AT THE TIME OF THE REQUEST.  
+%>(dmiralles2009@gmail.com,  cc: mteixeir@ieee.org )
+%>
+% =========================================================================
+
+
+% Faster GPS via the Sparse Fourier Transform
+% MATLAB test code implementation based on MIT algorithm
+% Sparse Algorithm by Haitham Hassanieh,...
+% Modifications by .....
+
+clear all   %clear all variables previously created
+clc         %clear the Matlab command prompt
+
+%==========================================================================
+% %RAW DATA 1 Settings (I y Q) (Present 01 03 07 19 20 22 24 28 31)
+% satellites=[01 03 07 19 20 22 24 28 31];
+% fs=12000000;
+% ts=1/fs;
+% fi=3563000;
+%==========================================================================
+
+%==========================================================================
+% %RAW DATA 2 Settings  (solo I, hay que modificar codigo para correr y subir la otra gps file)
+% satellites=[01 21 29 30 31];
+% fs=5456000;
+% ts=1/fs;
+% fi=4092000;
+%==========================================================================
+
+%==========================================================================
+% %RAW DATA 3 Settings (I y Q) Akos-Book (21 is present according to book, 19 is not)
+ satellites=[3 4 6 9 15 18 21 22 26]; %(detected: ?3, 6,  21, 22, 26, 29,) 
+fs=38192000;
+ts=1/fs;
+fi=9548000;
+%==========================================================================
+
+%==========================================================================
+% %RAW DATA 4 Settings (I y Q) Akos-Book ( 2nd data set)
+% satellites=[01 02 03 04 05 06 07 17 19 21 22 23 24 25 26 27 28 29 30 31]; %(detected: 19,...)
+% fs=16367600;
+% ts=1/fs;
+% fi=4130400;
+%==========================================================================
+
+%==========================================================================
+%RAW DATA 5 
+% satellites=[22 3 19 14 18 11 32 6]; %(sorted from strongest to weakest
+% fs=16367600;
+% ts=1/fs;
+% fi=4130400;
+%==========================================================================
+
+%> @fn G=CACODE(SV,FS)
+%> @author    Dan Boschen
+%> @date      15 Apr 2007
+%> @brief     Generates C/A Codes for selected PRNs, up to 37 codes.
+%> G is a matrix with 1023*FS columns with a row for each PRN desired.
+%> SV is a vector containing PRN numbers to be generated, from 1 to 37.
+%> FS is the number of samples per chip desired in the code sequence. (Default=1).
+%> @param SV is a vector containing PRN numbers to be generated.
+%> @param FS is the number of samples per chip desired in the code sequence..
+%> @return G is a matrix with 1023*FS columns with a row for each PRN desired..
+g=cacode(satellites, (fs/1023000)); %Creates the matrix of prn codes
+
+ntemp=length(g(1,:));    %Obtain pulse size based on the output of cacode 
+%function. Note that the size is stored in a temporary variable. This is
+%made in order to allow the script to work with any sampling frequency.
+
+p= round(sqrt(log(ntemp)/log(2)))   %define p according to the formula but with rounding its value instead of flooring it.
+B = round(ntemp/p)                  %define the bucket downsampling unit as n/p according to the papers annotations
+ceil_floor = 0;                     %determine operation 0 = floor, 1 =  ceil
+if(B*p == ntemp)
+    n=ntemp                        %if B*p is equal to the size of the pulse, then n = ntemp
+else
+    if(B*p > ntemp)                 %check if the new value os different than the old value of n, if yes, then n changes
+        n= B*p;                     %define the signal new size, ensure that it always keep a length of B*p
+        ceil_floor = 1;
+    else                            %else (B*p < ntemp) , this is a floor 
+        n= B*p;                     %define the signal new size, ensure that it always keep a length of B*p
+        ceil_floor = 0;
+    end 
+end
+k = 5;                          %number of buckets to be used
+maxallowedbymemory=n*p*k;       %data read from file
+
+% SELECT DATA FILE TO READ
+%==========================================================================
+% % the data 1: compact.bin should be compactdataq_etc_etc...
+% [fid, message] = fopen('compact_20050407_142600.bin', 'r', 'b');
+% data = fread(fid,maxallowedbymemory, 'ubit1')';
+% fclose(fid);
+%==========================================================================
+
+%==========================================================================
+% Data 2, with I component only
+%[fid, message] = fopen('gps.samples.1bit.I.fs5456.if4092.bin', 'r', 'b');
+
+%==========================================================================
+
+%==========================================================================
+% Data 3, from Borre-Akos book
+[fid, message] = fopen('GPSdata-DiscreteComponents-fs38_192-if9_55.bin', 'r', 'b');
+data = fread(fid,maxallowedbymemory, 'bit8')';
+fclose(fid);
+%==========================================================================
+
+%==========================================================================
+% % Data 4, from Borre-Akos book (2nd data set)
+% [fid, message] = fopen('GPS_and_GIOVE_A-NN-fs16_3676-if4_1304.bin', 'r', 'b');
+% data = fread(fid,maxallowedbymemory, 'bit8')';
+% fclose(fid);
+%==========================================================================
+
+%==========================================================================
+% % Data 5, 
+% [fid, message] = fopen('gioveAandB_short.bin', 'r', 'b');
+% data = fread(fid,maxallowedbymemory, 'bit8')';
+% fclose(fid);
+%==========================================================================
+
+thresholdsparse = 9;    %threshold value, obtained from QuickSync Paper description
+
+
+nn=0:length(data)-1;
+ficarrierQ=((cos(2*pi*fi*nn*ts)));
+ficarrierI=((sin(2*pi*fi*nn*ts)));
+
+% ******* I and Q using XOR of 1s and 0s *******
+ficarrierI2=ficarrierI>0; % positives go to 1 negatives go to 0
+ficarrierQ2=ficarrierQ>0;  % positives go to 1 negatives go to 0
+data=data>0;
+datafiI=xor(data,ficarrierI2); % xor data  with sin to obtain I
+datafiQ=xor(data,ficarrierQ2); % xor data  with cos to obtain Q
+wholesignal=(2*datafiI-1)+1*1i*(2*datafiQ-1);
+
+
+% %******** I and Q using . (multiplication of 1s and -1s)********
+% data = data * 2 - 1; %To convert values to +/- 1
+% ficarrierI2=2*ceil(ficarrierI)-1; % 
+% ficarrierQ2=2*ceil(ficarrierQ)-1; % 
+% datafiI=(data.*ficarrierI2);
+% datafiQ=(data.*ficarrierQ2);
+% wholesignal=(datafiI)+1*j*(datafiQ);
+
+%Variable preallocation. As recommende by MATLAB, variables that change
+%size in a loop should be first declared. This increase execution speed.
+
+cornp2 = (1:p);     %store result of final correlation between the doppler
+% corrected signal and the pulse.
+whole_set(length(satellites),6) = 0; %variable holding important values 
+%after threshold is detected. The matrix stores variables in the following
+%order per PRN: PRN-SNR-Doppler Shift- Deviation from IF- Code Phase-
+%number of buckets.
+
+
+bucketnp(n*p) = 0;      %var holding the data in chunks of size p*n.
+bucketnpexp(n*p) = 0;     % var holding the data with doppler correction by means of complex exponential multiplication.
+bucketfolded(B) = 0;    %var holding the aliased bucket (B samples apart are sum up together)
+
+xs(B) = 0;      %acumulation bucket results
+xss(B) = 0;     %acumulation bucket results without peak signal
+possibledelay(p) = 0;   %vector holding the p possible delays.
+
+delays(length(satellites),p) = 0; %variable holding the p possible delay per
+% satellites detected.
+outputfoldedbuckets(B)=0;           %variable storing the output of the ifft
+
+
+
+tic     %start counting execution time
+range = 0:n*p-1; %range for exponential multiplication
+for frequencydopplershift=-10*p:1:10*p
+     
+    for prncounter=1:1:length(satellites)
+        
+        xs = zeros(1,B);    %clean accumulation buckets variable before going to other satellite
+        xss= zeros(1,B);    %clean accumulation buckets variable before going to other satellite
+        stop = 0;           %stop detection when for a given doppler threshold value is exceeded
+        
+        %*******METHOD 2*********
+        pulse = g(prncounter, :);       %obtain prn pulse code given the PRN number
+%         if(ntemp ~= n)                  %check is there was a change in size due fs
+%             if(ceil_floor == 0)         %ceil_floor=0 means data must be truncated
+%                 pulse = pulse(1:n);
+%             else                        %else zero pad the data untill the desired value
+%                 pulse(n) = 0;
+%             end
+%         end
+        pulse = pulse*2-1;              %change 0 by -1.
+        pulsefolded = sum(reshape(pulse,B,p).');    %folding of tje pulse
+        fftpulsefolded = fft(pulsefolded);          %fft of folded pulse, this means downsampling in frequency domain
+        conjfftpulsefolded = conj(fftpulsefolded);  %conjugate of the freq. dpmain pulse
+
+        %conjfftpulsefolded=circshift(conjfftpulsefolded,frequencydopplershift);
+        for i=1:k
+            bucketnp=wholesignal((i-1)*p*n+1:i*n*p);
+            %perform similar operation on the signal as the one applied on
+            %the pulse. That is , zero pad the raw signal or truncate it as
+            %in the PRN local pulse. This increase resolution and
+            %robustness.
+%             if(ntemp ~= n)
+%                 if(ceil_floor == 0)
+%                     bucketnp = bucketnp(1:n*p);
+%                 else
+%                     bucketnp(n*p) = 0;
+%                 end
+%             end
+            %correct Doppler effect by performing complex exponential
+            %multiplication on the raw signal. Frequency resolution bin in
+            %here is 1000 Hz/ p
+            bucketnpexp =  bucketnp.*exp(1i*(2*pi/(n*p))*frequencydopplershift.*range);
+            bucketfolded=sum(reshape(bucketnpexp,B,p^2).');
+            
+            % FFT of folded length-p*n bucket
+            fftbucketfolded=fft(bucketfolded);
+
+
+            %STEP 4****************************************
+            %IFFT of the pointwise product of fft of folded pulse and fft of folded
+            %bucket
+            outputfoldedbuckets=ifft(conjfftpulsefolded.*fftbucketfolded);
+
+
+            xs=(abs(outputfoldedbuckets).^2)+xs;% accumulated output buckets to enhance detection peak
+
+            % STEP 5
+
+            % Looking for the sample with the largest spike in the accumulated output bucket
+            % The delay in the bucket is the largest sample positon.
+            % For example, if it is a delay of n/p+x or 2*n/p+x this method gives x as the delay in the folded bucket.
+            % Therefore we have to find a way to settle the ambiguity (see below)
+
+            [sizepeak,delayinfoldedbucket]=max(xs); %delay estimation based on the accumulation of several output buckets
+            xss = xs; % auxiliary variable to mantain the accumulator untouched
+            %SIGNAL TO NOISE RATIO  (signal: peak power    noise: noise floor power)
+            xss(delayinfoldedbucket)=0; %take peak out of accumulated output folded bucket
+            noisefloorpwr=mean(xss);%power of noise bed in output folded bucket
+            SNRmethod2=(sizepeak/noisefloorpwr);
+            
+            
+            if stop == 0 && SNRmethod2>thresholdsparse  % threshold comparison 
+               buckets_used_method2=i;                  %amount of data of size n*p used for detection
+               detected_doppler_shift = (frequencydopplershift) ;%Doppler shift calculated based on doppler from break
+               deviation_from_IF=fi-detected_doppler_shift*(1000)/p;
+               detected_code_phase_folded=delayinfoldedbucket;
+               stop = 1;
+               
+               for jj=1:p                    
+                   possibledelay(jj)= detected_code_phase_folded+(jj-1)*n/p;
+               end
+
+               for jj=1:p
+                    cornp2(jj)=sum(pulse.*bucketnpexp(possibledelay(jj):possibledelay(jj)+n-1));
+                    
+               end
+               [size,delaychoice]=max(abs(cornp2));
+               detected_code_phase=detected_code_phase_folded+(delaychoice-1)*n/p;
+               if SNRmethod2 > whole_set(prncounter,2)
+                    delays(prncounter,:) = [possibledelay];
+                    whole_set(prncounter,:) = [satellites(prncounter),round(SNRmethod2),deviation_from_IF,detected_doppler_shift,detected_code_phase,i];
+               end
+               
+            end
+        end
+    end
+end
+
+executiontime = toc

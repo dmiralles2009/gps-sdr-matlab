@@ -1,0 +1,218 @@
+% =========================================================================
+%> @brief Baseline implementation with doppler correction and 1000 Hz of accuracy. 
+%> @details 
+%> Doppler correction performed in freq by means of a  circular shift.Structure for detection is sat->doppler->buckets.  
+%>    -# GPS PRN Correlator Detector (parallel code phase search) 
+%>    -# Doppler search step: 1000 Hz.
+%>    -# Uses data 1ms in length (corresponds to 1 PRN) sampled at Fs
+%> @date      May 15, 2014
+%> @pre       Former File Name: BL_SAT_DPL_FH_FREQ.m
+%> @bug       Code Phase delay may be different by 1 unit.
+%> @note      This file represents the function version of the file name BL_SAT_DPL_FREQ.m
+%> @author    Capstone Team
+%> @param dataset Selects the data set to be read for data. For more information on the data sets available refer to \ref rawFiles.
+%> @param fs Sampling frequency 
+%> @param fi Intermediate frequency
+%> @param satellites List of prn satellites numbers to be detected. Values should range from 1 to 32.
+%> @param thresholdbaseline Value to determine when a detection is valid
+%>
+%> @retval whole_set List of syncronization values to be returned.
+% =========================================================================
+function whole_set = bl_sat_dpl_fh_freq(dataset,fs,fi,satellites,thresholdbaseline)
+
+%Search for the number of arguments the user put when calling the function
+switch nargin
+    case 1
+        error('Please enter sampling frequency and intermediate frequency')
+    case 2
+        error('Intermediate frequency value is compulsory')
+    case 3
+        satellites = [1:32];
+    case 4
+        if (max(satellites)>37) || (min(satellites)<1) || (min(satsize(satellites))~=1)
+            error('sv must be a row or column vector with integers between 1 and 37\n')
+        end
+        thresholdbaseline = 10;
+    case 5
+        %do nothing. User entered all values into the function
+    otherwise
+        error('Wrong number of input values')
+end
+
+ts=1/fs;
+
+
+%==========================================================================
+% RAW DATA 1 Settings (I y Q) (Present 01 03 07 19 20 22 24 28 31)
+% satellites=[01 03 07 19 20 22 24 28 31];
+% fs=12000000;
+% ts=1/fs;
+% fi=3563000;
+%==========================================================================
+
+%==========================================================================
+% %RAW DATA 2 Settings  (solo I, hay que modificar codigo para correr y subir la otra gps file)
+% satellites=[01 21 29 30 31];
+% fs=5456000;
+% ts=1/fs;
+% fi=4092000;
+%==========================================================================
+
+%==========================================================================
+%RAW DATA 3 Settings (I y Q) Akos-Book (21 is present according to book, 19 is not)
+%(detected: ?3, 6,  21, 22, 26, 29,) 
+% satellites=[3 4 6 9 15 18 21 22 26];
+% fs=38192000;
+% ts=1/fs;
+% fi=9548000;
+%==========================================================================
+
+%==========================================================================
+%RAW DATA 4 Settings (I y Q) Akos-Book ( 2nd data set)
+% satellites=[01 02 03 04 05 06 07 17 19 21 22 23 24 25 26 27 28 29 30 31]; %(detected: 19,...)
+% fs=16367600;
+% ts=1/fs;
+% fi=4130400;
+%==========================================================================
+
+%==========================================================================
+%RAW DATA 5 
+% satellites=[22 3 19 14 18 11 32 6]; %(sorted from strongest to weakest
+% fs=16367600;
+% ts=1/fs;
+% fi=4130400;
+%==========================================================================
+
+
+%> @fn G=CACODE(SV,FS)
+%> @author    Dan Boschen
+%> @date      15 Apr 2007
+%> @brief     Generates C/A Codes for selected PRNs, up to 37 codes.
+%> G is a matrix with 1023*FS columns with a row for each PRN desired.
+%> SV is a vector c
+
+g=cacode(satellites, fs/1023000); 
+n=length(g(1,:));
+p= round(sqrt(log(n)/log(2)));
+k = 5;      % number of buckets
+maxallowedbymemory= n*p*k;
+
+% SELECT DATA FILE TO READ
+switch dataset
+    case 1
+        % Data Set 1: compact.bin should be compactdataq_etc_etc...
+        % [fid, message] = fopen('compact.bin', 'r', 'b');
+        % data = fread(fid,maxallowedbymemory, 'ubit1')';
+        % fclose(fid);
+        [fid, message] = fopen('compact.bin', 'r', 'b');
+        data = fread(fid,maxallowedbymemory, 'ubit1')';
+        fclose(fid);
+   case 2
+       % Data 2, with I component only
+        %[fid, message] = fopen('gps.samples.1bit.I.fs5456.if4092.bin', 'r', 'b');
+        %
+        % 
+      statements
+    case 3
+        % Data 3, from Borre-Akos book
+        % [fid, message] = fopen('GPSdata-DiscreteComponents-fs38_192-if9_55.bin', 'r', 'b');
+        % data = fread(fid,maxallowedbymemory, 'bit8')';
+        % fclose(fid);
+        [fid, message] = fopen('GPSdata-DiscreteComponents-fs38_192-if9_55.bin', 'r', 'b');
+        data = fread(fid,maxallowedbymemory, 'bit8')';
+        fclose(fid);
+    case 4
+        % % Data 4, from Borre-Akos book (2nd data set)
+        % [fid, message] = fopen('GPS_and_GIOVE_A-NN-fs16_3676-if4_1304.bin', 'r', 'b');
+        % data = fread(fid,maxallowedbymemory, 'bit8')';
+        % fclose(fid);
+        [fid, message] = fopen('GPS_and_GIOVE_A-NN-fs16_3676-if4_1304.bin', 'r', 'b');
+        data = fread(fid,maxallowedbymemory, 'bit8')';
+        fclose(fid);
+    case 5
+        % % Data 5, 
+        % [fid, message] = fopen('gioveAandB_short.bin', 'r', 'b');
+        % data = fread(fid,maxallowedbymemory, 'bit8')';
+        % fclose(fid);
+        [fid, message] = fopen('gioveAandB_short.bin', 'r', 'b');
+        data = fread(fid,maxallowedbymemory, 'bit8')';
+        fclose(fid);
+    otherwise
+       error('Wrong data set number');
+end
+
+
+nn=0:length(data)-1;
+ficarrierQ=((cos(2*pi*fi*nn*ts)));
+ficarrierI=((sin(2*pi*fi*nn*ts)));
+
+% ******* I and Q using XOR of 1s and 0s *******
+ficarrierI2=ficarrierI>0; % positives go to 1 negatives go to 0
+ficarrierQ2=ficarrierQ>0;  % positives go to 1 negatives go to 0
+data=data>0;
+datafiI=xor(data,ficarrierI2); % xor data  with sin to obtain I
+datafiQ=xor(data,ficarrierQ2); % xor data  with cos to obtain Q
+wholesignal=(2*datafiI-1)+1i*(2*datafiQ-1);
+
+
+whole_set(length(satellites),6) = 0;
+corr4(n) = 0;
+x(n) = 0;
+conjfftpulses(length(satellites),n) = 0;
+signalshift(k,n) = 0;
+
+pulses = g;                  %obtain prn pulse code given the PRN number
+pulses = pulses*2-1;          %change 0 by -1.
+
+%Perform pulse manipulation outside main loop. Here memory usage is
+%increased but execution time is reduced.
+for prncounter=1:1:length(satellites)
+    fftpulse = fft(pulses(prncounter,:));
+    conjfftpulses(prncounter,:) = conj(fftpulse);
+end
+
+tic
+%DOPPLER SHIFT SEARCH
+range = 0:n-1;
+for prncounter=1:1:length(satellites) 
+    for frequencydopplershift=-10:1:10
+        for ii=1:k
+            signal = wholesignal((ii-1)*n+1:ii*n);
+            signalfreq = fft(signal);
+            signalshift(ii,:) = circshift(signalfreq,[0,frequencydopplershift]);
+
+        end
+        
+        corr4=zeros(1,n); % correlation result preallocation
+        SNRmethod4=0; % SNR method 4 init
+        x=zeros(1,n); %acumulation bucket
+        stop = 0;
+
+        for ii=1:k %floor(length(wholesignal)/n) % divides signal into buckets of length n
+            
+            corr4 = ifft(conjfftpulses(prncounter,:).*signalshift(ii,:));%uses FFT to conv (or correlate)with each length-n bucket
+            x=abs(corr4).^2+(x);            %accumulates with previous correlation
+            [size,delaysamples4]=max((x));  % find the maximum size and position in accumulated correlations
+          
+            %SIGNAL TO NOISE RATIO Calculation (signal: peak power    noise: noise floor power)
+            xx=x; % auxiliary variable in order to keep the accumulator as it is
+            xx(delaysamples4)=0; %takes peak out of correlation result
+            %noisefloorpwr=var(corr); %calculate noise variance %power of noise in output bucket
+            %noisefloorpwr=var(detrend(corr)); %power of noise in output bucket
+            noisefloorpwr=mean((xx));  %power of noise bed in output bucket (peak not included)
+            SNRmethod4=size/noisefloorpwr;  % SNR calculation for this method
+          
+            if stop == 0 && SNRmethod4>thresholdbaseline  % threshold comparison
+                stop = 1;
+                detected_doppler_shift_a=(frequencydopplershift); %Doppler shift calculated based on doppler from break
+                deviation_from_IF_a=fi+detected_doppler_shift_a*1000;
+                detected_code_phase_a=delaysamples4;
+                buckets_used_baseline_a=ii;
+                if SNRmethod4 > whole_set(prncounter,2)
+                    whole_set(prncounter,:) = [satellites(prncounter),round(SNRmethod4),deviation_from_IF_a,detected_doppler_shift_a,detected_code_phase_a,ii];
+                end
+            end
+        end
+    end
+end
+operation_time = toc
